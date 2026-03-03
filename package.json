@@ -1,0 +1,42 @@
+{
+  "name": "jebbs-print-service",
+  "version": "1.0.0",
+  "description": "Servicio de impresión para Jebbs Burgers",
+  "private": true,
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "pkg": "npm run build && pkg dist/index.js --targets node18-win-x64 --output build/jebbs-print-service.exe",
+    "pkg:all": "npm run build && pkg dist/index.js --targets node18-win-x64,node18-linux-x64,node18-macos-x64 --out-path build",
+    "pkg:with-assets": "npm run build && pkg . --targets node18-win-x64 --output build/jebbs-print-service.exe"
+  },
+  "pkg": {
+    "assets": [
+      "assets/**/*",
+      "node_modules/node-thermal-printer/**/*"
+    ],
+    "scripts": [],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "build"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "node-thermal-printer": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.0.6",
+    "pkg": "^5.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

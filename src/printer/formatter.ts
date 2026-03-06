@@ -10,7 +10,6 @@ import {
 } from "../utils/translate";
 
 const LINE_WIDTH = 42;
-const NAME_WIDTH = 28;
 const BOLD_ON = "\x1B\x45\x01";
 const BOLD_OFF = "\x1B\x45\x00";
 const ALIGN_CENTER = "\x1B\x61\x01";
@@ -28,24 +27,22 @@ function formatCurrency(amount: number): string {
 function formatBurgerDetails(burger: BurgerCustomization): string {
   let details = "";
 
-  // Medallones
   if (burger.meatCount !== 2) {
     details += `    ${burger.meatCount} ${burger.meatCount === 1 ? "carne" : "carnes"}\n`;
   }
 
-  // Papas
   if (burger.friesQuantity === 0) {
     details += `    Sin papas\n`;
-  } else if (burger.friesQuantity > 1) {
+  } else if (burger.friesQuantity === 1) {
+    details += `    1 Porción de papas\n`;
+  } else {
     details += `    ${burger.friesQuantity} porciones de papas\n`;
   }
 
-  // Ingredientes removidos
   if (burger.removedIngredients.length > 0) {
     details += `    Sin: ${burger.removedIngredients.join(", ")}\n`;
   }
 
-  // Extras de la burger
   if (burger.extras.length > 0) {
     burger.extras.forEach((extra) => {
       details += `    + ${extra.quantity}x ${extra.name}\n`;
@@ -61,7 +58,6 @@ function formatComboItem(item: OrderItemWithExtras): string {
     | ComboCustomization[]
     | undefined;
 
-  // Header del combo
   text += `${BOLD_ON}${item.quantity}x ${item.burger_name}${BOLD_OFF}\n`;
   text += `${formatCurrency(item.subtotal)}\n`;
 
@@ -70,17 +66,14 @@ function formatComboItem(item: OrderItemWithExtras): string {
     return text;
   }
 
-  // Detalles de cada slot
-  customizations.forEach((slot, slotIndex) => {
+  customizations.forEach((slot) => {
     if (slot.burgers.length === 0) return;
-
     slot.burgers.forEach((burger) => {
       text += `  ${burger.quantity}x ${burger.name}\n`;
       text += formatBurgerDetails(burger);
     });
   });
 
-  // Extras del combo (extras adicionales)
   if (item.extras.length > 0) {
     text += `\n  Extras adicionales:\n`;
     item.extras.forEach((extra) => {
@@ -95,36 +88,32 @@ function formatComboItem(item: OrderItemWithExtras): string {
 function formatBurgerItem(item: OrderItemWithExtras): string {
   let text = "";
 
-  // Header de la burger
   text += `${BOLD_ON}${item.quantity}x ${item.burger_name}${BOLD_OFF}\n`;
   text += `${formatCurrency(item.subtotal)}\n`;
 
-  // 🆕 Parsear customizaciones para obtener meatCount y friesQuantity
   let parsedCustom: any = null;
   if (item.customizations) {
     try {
       parsedCustom = JSON.parse(item.customizations);
     } catch {
-      // Si no es JSON válido, es el formato viejo (string de ingredientes)
       text += `  ${item.customizations}\n`;
     }
   }
 
-  // 🆕 Mostrar medallones si difiere de 2 (default)
   if (parsedCustom?.meatCount && parsedCustom.meatCount !== 2) {
     text += `  ${parsedCustom.meatCount} ${parsedCustom.meatCount === 1 ? "carne" : "carnes"}\n`;
   }
 
-  // 🆕 Mostrar papas si es 0 o mayor a 1
   if (parsedCustom?.friesQuantity !== undefined) {
     if (parsedCustom.friesQuantity === 0) {
       text += `  Sin papas\n`;
-    } else if (parsedCustom.friesQuantity > 1) {
+    } else if (parsedCustom.friesQuantity === 1) {
+      text += `  1 porción de papas\n`;
+    } else {
       text += `  ${parsedCustom.friesQuantity} porciones de papas\n`;
     }
   }
 
-  // 🆕 Ingredientes removidos
   if (
     parsedCustom?.removedIngredients &&
     parsedCustom.removedIngredients.length > 0
@@ -132,7 +121,6 @@ function formatBurgerItem(item: OrderItemWithExtras): string {
     text += `  Sin: ${parsedCustom.removedIngredients.join(", ")}\n`;
   }
 
-  // Extras de la orden
   if (item.extras.length > 0) {
     item.extras.forEach((extra) => {
       text += `  + ${extra.quantity}x ${extra.extra_name}\n`;
@@ -143,14 +131,95 @@ function formatBurgerItem(item: OrderItemWithExtras): string {
   return text;
 }
 
+// ================= RESUMEN DE PREPARACIÓN =================
+
+interface PrepSummary {
+  totalMeat: number;
+  totalFries: number;
+}
+
+function calculatePrepSummary(order: OrderWithItems): PrepSummary {
+  let totalMeat = 0;
+  let totalFries = 0;
+
+  order.items.forEach((item) => {
+    if (item.combo_id) {
+      let customizations:
+        | ComboCustomization[]
+        | BurgerCustomization[]
+        | undefined = item.parsedCustomizations;
+
+      if (!customizations && item.customizations) {
+        try {
+          customizations = JSON.parse(item.customizations);
+        } catch {
+          customizations = undefined;
+        }
+      }
+
+      if (customizations) {
+        customizations.forEach((slot: any) => {
+          if (slot.burgers) {
+            slot.burgers.forEach((burger: any) => {
+              totalMeat += burger.meatCount * burger.quantity;
+
+              if (burger.friesQuantity !== undefined) {
+                totalFries += burger.friesQuantity * burger.quantity;
+              }
+            });
+          }
+        });
+      }
+    } else {
+      let parsedCustom: any = null;
+
+      if (item.customizations) {
+        try {
+          parsedCustom = JSON.parse(item.customizations);
+        } catch {}
+      }
+
+      const meatCount = parsedCustom?.meatCount ?? 2;
+      const friesQuantity = parsedCustom?.friesQuantity ?? 1;
+
+      totalMeat += meatCount * item.quantity;
+      totalFries += friesQuantity * item.quantity;
+    }
+  });
+
+  return { totalMeat, totalFries };
+}
+
+function formatPrepSummary(order: OrderWithItems): string {
+  const { totalMeat, totalFries } = calculatePrepSummary(order);
+  const thinLine = "-".repeat(LINE_WIDTH);
+  let text = "";
+
+  text += `${thinLine}\n`;
+  text += `${BOLD_ON}RESUMEN PREPARACIÓN${BOLD_OFF}\n`;
+  text += formatLine("Medallones:", `${totalMeat}`) + "\n";
+  text +=
+    formatLine("Papas:", `${totalFries === 0 ? "Sin papas" : totalFries}`) +
+    "\n";
+
+  return text;
+}
+
+// ================= FORMATO PRINCIPAL =================
+
 export function formatOrder(order: OrderWithItems): string {
   let text = "";
   const line = "=".repeat(LINE_WIDTH);
   const thinLine = "-".repeat(LINE_WIDTH);
-  const deliveryText = translateDeliveryType(order.delivery_type);
+  const deliveryText = translateDeliveryType(order.delivery_type) ?? "";
   const paymentText = translatePaymentMethod(order.payment_method);
+  const deliveryHeader = order.delivery_time
+    ? `${deliveryText.toUpperCase()} | ${order.delivery_time}`
+    : deliveryText.toUpperCase();
 
   // Header
+  text += "\n";
+  text += `${ALIGN_CENTER}${BOLD_ON}${deliveryHeader}${BOLD_OFF}${ALIGN_LEFT}\n`;
   text += "\n";
   text += `${ALIGN_CENTER}${BOLD_ON}JEBBS BURGERS${BOLD_OFF}${ALIGN_LEFT}\n`;
   text += `${line}\n`;
@@ -188,7 +257,10 @@ export function formatOrder(order: OrderWithItems): string {
     }
   });
 
-  text += `${thinLine}\n\n`;
+  // Resumen de preparación (medallones + papas)
+  text += formatPrepSummary(order);
+
+  text += `\n${thinLine}\n\n`;
 
   // Totals
   const subtotalBeforeDiscount =

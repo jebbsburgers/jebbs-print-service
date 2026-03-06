@@ -51,10 +51,10 @@ function printFriesLine(
     );
   } else if ((friesAdjustment ?? 0) > 0) {
     printer.println(
-      `${indent}${friesQuantity} papas  +$${friesAdjustment.toLocaleString("es-AR")}`,
+      `${indent}${friesQuantity} porción de papas  +$${friesAdjustment.toLocaleString("es-AR")}`,
     );
   } else {
-    printer.println(`${indent}${friesQuantity} papas`);
+    printer.println(`${indent}${friesQuantity} porción de papas`);
   }
 }
 
@@ -121,7 +121,12 @@ export async function printOrderWithThermal(
 
     printer.bold(true);
     printer.setTextSize(2, 2);
-    printer.println(`PEDIDO #${order.order_number}`);
+    if (order.order_number >= 100) {
+      printer.println("PEDIDO");
+      printer.println(`#${order.order_number}`);
+    } else {
+      printer.println(`PEDIDO #${order.order_number}`);
+    }
     printer.setTextSize(0, 0);
     printer.bold(false);
 
@@ -393,6 +398,104 @@ export async function printOrderWithThermal(
     printer.setTextSize(0, 0);
     printer.bold(false);
 
+    printer.drawLine();
+    printer.newLine();
+    printer.newLine();
+
+    // ===== RESUMEN COCINA =====
+    printer.alignLeft();
+    printer.bold(true);
+    printer.setTextSize(0, 1);
+    printer.println("RESUMEN");
+    printer.setTextSize(0, 0);
+    printer.bold(false);
+    printer.newLine();
+
+    // Contar medallones
+    let totalMeat = 0;
+    // Contar papas de burgers (friesQuantity en customizations)
+    let totalFries = 0;
+    // Contar extras (papas grandes, bebidas, etc.) con un mapa
+    const extrasSummary: Record<string, number> = {};
+
+    for (const item of order.items) {
+      if (item.customizations) {
+        try {
+          const customData = JSON.parse(item.customizations);
+
+          if (Array.isArray(customData)) {
+            customData.forEach((slot: any) => {
+              slot.burgers?.forEach((burger: any) => {
+                totalMeat += (burger.meatCount ?? 1) * (burger.quantity ?? 1);
+
+                if (burger.friesQuantity !== undefined) {
+                  totalFries += burger.friesQuantity * (burger.quantity ?? 1);
+                }
+              });
+            });
+          } else {
+            totalMeat += (customData.meatCount ?? 1) * item.quantity;
+
+            if (customData.friesQuantity !== undefined) {
+              totalFries += customData.friesQuantity * item.quantity;
+            }
+          }
+        } catch {}
+      }
+
+      // 🟢 Detectar items tipo nuggets / aros
+      const itemName = item.burger_name?.toLowerCase() ?? "";
+
+      if (itemName.includes("nuggets") || itemName.includes("aros")) {
+        extrasSummary[item.burger_name] =
+          (extrasSummary[item.burger_name] ?? 0) + item.quantity;
+      }
+
+      // Extras dentro de hamburguesas
+      for (const extra of item.extras) {
+        const name = extra.extra_name.toLowerCase();
+
+        const isSide =
+          name.includes("papas") ||
+          name.includes("coca") ||
+          name.includes("bebida");
+
+        if (!isSide) continue;
+
+        const key = extra.extra_name;
+        extrasSummary[key] = (extrasSummary[key] ?? 0) + extra.quantity;
+      }
+    }
+
+    if (totalMeat > 0) {
+      printer.bold(true);
+      printer.print(`${totalMeat}`);
+      printer.bold(false);
+      printer.println(`  Medallones`);
+    }
+    if (totalFries > 0) {
+      printer.bold(true);
+      printer.print(`${totalFries}`);
+      printer.bold(false);
+      printer.println(`  Papas`);
+    }
+    for (const [name, qty] of Object.entries(extrasSummary)) {
+      let displayName = name;
+
+      // Abreviar tamaños en papas bacon cheddar
+      if (displayName.toLowerCase().includes("papas con bacon y cheddar")) {
+        displayName = displayName
+          .replace(/chicas/i, "CH")
+          .replace(/grandes/i, "GR");
+      }
+
+      printer.bold(true);
+      printer.print(`${qty}`);
+      printer.bold(false);
+      printer.println(`  ${displayName}`);
+    }
+
+    printer.newLine();
     printer.drawLine();
     printer.newLine();
 

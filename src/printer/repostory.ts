@@ -6,17 +6,11 @@ import type {
   ComboCustomization,
 } from "../types/order";
 
-/**
- * Parsea las customizaciones de un item
- * - Si es combo: JSON con slots y burgers
- * - Si es burger individual: String con ingredientes removidos
- */
 function parseCustomizations(
   item: any,
 ): BurgerCustomization[] | ComboCustomization[] | undefined {
   if (!item.customizations) return undefined;
 
-  // Si es combo (tiene combo_id)
   if (item.combo_id) {
     try {
       const parsed = JSON.parse(item.customizations);
@@ -26,15 +20,12 @@ function parseCustomizations(
     }
   }
 
-  // Si es burger individual, no hay mucho que parsear
-  // (solo tiene string de ingredientes removidos)
   return undefined;
 }
 
 export async function getOrderWithItems(
   orderId: string,
 ): Promise<OrderWithItems> {
-  // 1. Traer orden
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .select("*")
@@ -45,7 +36,6 @@ export async function getOrderWithItems(
     throw new Error("Order not found");
   }
 
-  // 2. Traer dirección del cliente (si tiene)
   let customerAddress = null;
   if (order.customer_address_id) {
     const { data: address } = await supabase
@@ -57,7 +47,6 @@ export async function getOrderWithItems(
     customerAddress = address;
   }
 
-  // 2.5 🆕 Traer teléfono del cliente (si tiene customer_id)
   let customerPhone: string | null = null;
   if (order.customer_id) {
     const { data: customer } = await supabase
@@ -69,10 +58,10 @@ export async function getOrderWithItems(
     customerPhone = customer?.phone ?? null;
   }
 
-  // 3. Traer items de la orden
+  // ✅ Incluir extra_id explícitamente para detectar sides correctamente
   const { data: items, error: itemsError } = await supabase
     .from("order_items")
-    .select("*")
+    .select("id, order_id, burger_id, combo_id, extra_id, burger_name, quantity, unit_price, subtotal, customizations, created_at")
     .eq("order_id", orderId)
     .order("created_at", { ascending: true });
 
@@ -80,7 +69,6 @@ export async function getOrderWithItems(
     throw new Error("Order items not found");
   }
 
-  // 4. Traer extras de cada item
   const itemsWithExtras: OrderItemWithExtras[] = await Promise.all(
     items.map(async (item) => {
       const { data: extras } = await supabase
@@ -102,6 +90,6 @@ export async function getOrderWithItems(
     ...order,
     items: itemsWithExtras,
     customerAddress,
-    customerPhone, // 🆕
+    customerPhone,
   };
 }

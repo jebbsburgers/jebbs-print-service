@@ -413,10 +413,13 @@ export async function printOrderWithThermal(
 
     // Contar medallones
     let totalMeat = 0;
+    let totalVeggieMeat = 0;
     // Contar papas de burgers (friesQuantity en customizations)
     let totalFries = 0;
     // Contar extras (papas grandes, bebidas, etc.) con un mapa
     const extrasSummary: Record<string, number> = {};
+    // Contar bebidas de combos
+    const drinksSummary: Record<string, number> = {};
 
     for (const item of order.items) {
       if (item.customizations) {
@@ -426,21 +429,44 @@ export async function printOrderWithThermal(
           if (Array.isArray(customData)) {
             customData.forEach((slot: any) => {
               slot.burgers?.forEach((burger: any) => {
-                totalMeat += (burger.meatCount ?? 1) * (burger.quantity ?? 1);
+                const meatQty = (burger.meatCount ?? 1) * (burger.quantity ?? 1) * item.quantity;
+                if (burger.name?.toLowerCase().includes("veggie")) {
+                  totalVeggieMeat += meatQty;
+                } else {
+                  totalMeat += meatQty;
+                }
 
                 if (burger.friesQuantity !== undefined) {
-                  totalFries += burger.friesQuantity * (burger.quantity ?? 1);
+                  totalFries += burger.friesQuantity * (burger.quantity ?? 1) * item.quantity;
                 }
               });
+
+              // Bebidas del combo
+              if (slot.selectedExtra && slot.slotType === "drink") {
+                const drinkName = slot.selectedExtra.name;
+                drinksSummary[drinkName] = (drinksSummary[drinkName] ?? 0) + item.quantity;
+              }
             });
           } else {
-            totalMeat += (customData.meatCount ?? 1) * item.quantity;
+            const meatQty = (customData.meatCount ?? 1) * item.quantity;
+            if (item.burger_name?.toLowerCase().includes("veggie")) {
+              totalVeggieMeat += meatQty;
+            } else {
+              totalMeat += meatQty;
+            }
 
             if (customData.friesQuantity !== undefined) {
               totalFries += customData.friesQuantity * item.quantity;
             }
           }
         } catch {}
+      } else if (item.burger_id && !item.combo_id) {
+        // Burger sin customizations: contar 1 medallón por cantidad
+        if (item.burger_name?.toLowerCase().includes("veggie")) {
+          totalVeggieMeat += item.quantity;
+        } else {
+          totalMeat += item.quantity;
+        }
       }
 
       // 🟢 Detectar items tipo nuggets / aros
@@ -473,11 +499,23 @@ export async function printOrderWithThermal(
       printer.bold(false);
       printer.println(`  Medallones`);
     }
+    if (totalVeggieMeat > 0) {
+      printer.bold(true);
+      printer.print(`${totalVeggieMeat}`);
+      printer.bold(false);
+      printer.println(`  Medallones Veggie`);
+    }
     if (totalFries > 0) {
       printer.bold(true);
       printer.print(`${totalFries}`);
       printer.bold(false);
       printer.println(`  Papas`);
+    }
+    for (const [name, qty] of Object.entries(drinksSummary)) {
+      printer.bold(true);
+      printer.print(`${qty}`);
+      printer.bold(false);
+      printer.println(`  ${name}`);
     }
     for (const [name, qty] of Object.entries(extrasSummary)) {
       let displayName = name;

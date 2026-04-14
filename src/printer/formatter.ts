@@ -27,7 +27,9 @@ function formatCurrency(amount: number): string {
 function formatBurgerDetails(burger: BurgerCustomization): string {
   let details = "";
 
-  if (burger.meatCount !== 2) {
+  if (burger.isVeggie) {
+    details += `    *** VEGGIES (${burger.meatCount} medallón${burger.meatCount !== 1 ? "es" : ""}) ***\n`;
+  } else if (burger.meatCount !== 2) {
     details += `    ${burger.meatCount} ${burger.meatCount === 1 ? "carne" : "carnes"}\n`;
   }
 
@@ -100,7 +102,9 @@ function formatBurgerItem(item: OrderItemWithExtras): string {
     }
   }
 
-  if (parsedCustom?.meatCount && parsedCustom.meatCount !== 2) {
+  if (parsedCustom?.isVeggie) {
+    text += `  *** VEGGIES (${parsedCustom.meatCount} medallón${parsedCustom.meatCount !== 1 ? "es" : ""}) ***\n`;
+  } else if (parsedCustom?.meatCount && parsedCustom.meatCount !== 2) {
     text += `  ${parsedCustom.meatCount} ${parsedCustom.meatCount === 1 ? "carne" : "carnes"}\n`;
   }
 
@@ -135,11 +139,13 @@ function formatBurgerItem(item: OrderItemWithExtras): string {
 
 interface PrepSummary {
   totalMeat: number;
+  totalMeatVeggie: number;
   totalFries: number;
 }
 
 function calculatePrepSummary(order: OrderWithItems): PrepSummary {
   let totalMeat = 0;
+  let totalMeatVeggie = 0;
   let totalFries = 0;
 
   order.items.forEach((item) => {
@@ -161,7 +167,12 @@ function calculatePrepSummary(order: OrderWithItems): PrepSummary {
         customizations.forEach((slot: any) => {
           if (slot.burgers) {
             slot.burgers.forEach((burger: any) => {
-              totalMeat += burger.meatCount * burger.quantity;
+              const medallones = burger.meatCount * burger.quantity;
+              if (burger.isVeggie) {
+                totalMeatVeggie += medallones;
+              } else {
+                totalMeat += medallones;
+              }
 
               if (burger.friesQuantity !== undefined) {
                 totalFries += burger.friesQuantity * burger.quantity;
@@ -181,23 +192,32 @@ function calculatePrepSummary(order: OrderWithItems): PrepSummary {
 
       const meatCount = parsedCustom?.meatCount ?? 2;
       const friesQuantity = parsedCustom?.friesQuantity ?? 1;
+      const medallones = meatCount * item.quantity;
 
-      totalMeat += meatCount * item.quantity;
+      if (parsedCustom?.isVeggie) {
+        totalMeatVeggie += medallones;
+      } else {
+        totalMeat += medallones;
+      }
+
       totalFries += friesQuantity * item.quantity;
     }
   });
 
-  return { totalMeat, totalFries };
+  return { totalMeat, totalMeatVeggie, totalFries };
 }
 
 function formatPrepSummary(order: OrderWithItems): string {
-  const { totalMeat, totalFries } = calculatePrepSummary(order);
+  const { totalMeat, totalMeatVeggie, totalFries } = calculatePrepSummary(order);
   const thinLine = "-".repeat(LINE_WIDTH);
   let text = "";
 
   text += `${thinLine}\n`;
   text += `${BOLD_ON}RESUMEN PREPARACIÓN${BOLD_OFF}\n`;
   text += formatLine("Medallones:", `${totalMeat}`) + "\n";
+  if (totalMeatVeggie > 0) {
+    text += formatLine("Medallones Veggies:", `${totalMeatVeggie}`) + "\n";
+  }
   text +=
     formatLine("Papas:", `${totalFries === 0 ? "Sin papas" : totalFries}`) +
     "\n";

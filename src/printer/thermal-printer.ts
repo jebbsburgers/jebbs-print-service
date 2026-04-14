@@ -205,8 +205,9 @@ export async function printOrderWithThermal(
       printer.bold(true);
 
       if (!isCombo && !isSide && customData?.meatCount) {
+        const veggieTag = customData.isVeggie ? " [VEGGIE]" : "";
         printer.println(
-          `${item.quantity}x ${item.burger_name} x${customData.meatCount}`,
+          `${item.quantity}x ${item.burger_name} x${customData.meatCount}${veggieTag}`,
         );
       } else {
         printer.println(`${item.quantity}x ${item.burger_name}`);
@@ -263,8 +264,9 @@ export async function printOrderWithThermal(
               if (slotIndex > 0) printer.newLine();
 
               slot.burgers.forEach((burger: any) => {
+                const veggieTag = burger.isVeggie ? " [VEGGIE]" : "";
                 printer.println(
-                  `${burger.quantity}x ${burger.name} x${burger.meatCount}`,
+                  `${burger.quantity}x ${burger.name} x${burger.meatCount}${veggieTag}`,
                 );
 
                 printer.newLine();
@@ -430,7 +432,7 @@ export async function printOrderWithThermal(
             customData.forEach((slot: any) => {
               slot.burgers?.forEach((burger: any) => {
                 const meatQty = (burger.meatCount ?? 1) * (burger.quantity ?? 1) * item.quantity;
-                if (burger.name?.toLowerCase().includes("veggie")) {
+                if (burger.isVeggie) {
                   totalVeggieMeat += meatQty;
                 } else {
                   totalMeat += meatQty;
@@ -449,7 +451,7 @@ export async function printOrderWithThermal(
             });
           } else {
             const meatQty = (customData.meatCount ?? 1) * item.quantity;
-            if (item.burger_name?.toLowerCase().includes("veggie")) {
+            if (customData.isVeggie) {
               totalVeggieMeat += meatQty;
             } else {
               totalMeat += meatQty;
@@ -461,20 +463,14 @@ export async function printOrderWithThermal(
           }
         } catch {}
       } else if (item.burger_id && !item.combo_id) {
-        // Burger sin customizations: contar 1 medallón por cantidad
-        if (item.burger_name?.toLowerCase().includes("veggie")) {
-          totalVeggieMeat += item.quantity;
-        } else {
-          totalMeat += item.quantity;
-        }
+        // Burger sin customizations: asumir regular
+        totalMeat += item.quantity;
       }
 
-      // 🟢 Detectar items tipo nuggets / aros
-      const itemName = item.burger_name?.toLowerCase() ?? "";
-
-      if (itemName.includes("nuggets") || itemName.includes("aros")) {
-        extrasSummary[item.burger_name] =
-          (extrasSummary[item.burger_name] ?? 0) + item.quantity;
+      // 🟢 Detectar acompañamientos standalone (tienen extra_id)
+      if (item.extra_id) {
+        const key = item.burger_name;
+        extrasSummary[key] = (extrasSummary[key] ?? 0) + item.quantity;
       }
 
       // Extras dentro de hamburguesas

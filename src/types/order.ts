@@ -40,6 +40,7 @@ export interface OrderItem {
 
   burger_id: string | null;
   combo_id: string | null;
+  extra_id: string | null;
   burger_name: string;
 
   quantity: number;
@@ -86,6 +87,7 @@ export interface BurgerCustomization {
   burgerId: string;
   name: string;
   meatCount: number;
+  isVeggie?: boolean;
   friesQuantity: number;
   quantity: number;
   removedIngredients: string[];

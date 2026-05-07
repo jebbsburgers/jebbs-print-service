@@ -1,4 +1,4 @@
-import { ThermalPrinter, PrinterTypes } from "node-thermal-printer";
+import { ThermalPrinter, PrinterTypes, CharacterSet } from "node-thermal-printer";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
@@ -12,10 +12,10 @@ import {
 const execAsync = promisify(exec);
 
 // Configuración de la impresora
-const PRINTER_NAME = "POS-58";
+const PRINTER_NAME = "POS-80-Series";
 
 // Ancho del papel térmico (caracteres)
-const PAPER_WIDTH = 32;
+const PAPER_WIDTH = 42;
 
 // Helper para calcular sizeLabel
 function getSizeLabel(meatCount: number): string {
@@ -35,28 +35,15 @@ function getSizeLabel(meatCount: number): string {
   }
 }
 
-// Helper para imprimir línea de papas con ajuste de precio
-function printFriesLine(
-  printer: ThermalPrinter,
-  friesQuantity: number,
-  friesAdjustment: number,
-  indent: string = "",
-) {
+function getFriesLabel(friesQuantity: number, friesAdjustment: number): string {
   if (friesQuantity === 0) {
     const discount = Math.abs(friesAdjustment ?? 0);
-    printer.println(
-      discount > 0
-        ? `${indent}Sin papas  -$${discount.toLocaleString("es-AR")}`
-        : `${indent}Sin papas`,
-    );
-  } else if ((friesAdjustment ?? 0) > 0) {
-    printer.println(
-      `${indent}${friesQuantity} porción de papas  +$${friesAdjustment.toLocaleString("es-AR")}`,
-    );
-  } else {
-    printer.println(`${indent}${friesQuantity} porción de papas`);
+    return discount > 0 ? `Sin papas (-$${discount.toLocaleString("es-AR")})` : "Sin papas";
   }
+  const label = friesQuantity === 1 ? "1 porción de papas" : `${friesQuantity} porciones de papas`;
+  return (friesAdjustment ?? 0) > 0 ? `${label} (+$${friesAdjustment.toLocaleString("es-AR")})` : label;
 }
+
 
 export async function printOrderWithThermal(
   order: OrderWithItems,
@@ -64,6 +51,7 @@ export async function printOrderWithThermal(
   const printer = new ThermalPrinter({
     type: PrinterTypes.EPSON,
     interface: "tcp://localhost",
+    characterSet: CharacterSet.PC858_EURO,
     removeSpecialCharacters: false,
     lineCharacter: "=",
     width: PAPER_WIDTH,
@@ -80,7 +68,7 @@ export async function printOrderWithThermal(
 
     // ===== HORARIO DE ENTREGA/RETIRO (ARRIBA A LA IZQUIERDA) =====
     if (order.delivery_time) {
-      printer.alignLeft();
+      printer.alignCenter();
       printer.bold(true);
       printer.setTextSize(1, 0);
 
@@ -151,17 +139,15 @@ export async function printOrderWithThermal(
     printer.bold(false);
     printer.newLine();
 
-    printer.println(order.customer_name);
+    printer.setTextSize(0, 1);
+    const phoneLabel = order.customerPhone ? `   Tel: ${order.customerPhone}` : "";
+    printer.println(`Nombre: ${order.customer_name}${phoneLabel}`);
+    printer.setTextSize(0, 0);
     printer.newLine();
 
-    if (order.customerPhone) {
-      printer.println(`Tel: ${order.customerPhone}`);
-    }
-
     if (order.customerAddress) {
-      printer.newLine();
       printer.println(
-        `${order.customerAddress.label} - ${order.customerAddress.address}`,
+        `Dirección: ${order.customerAddress.label} - ${order.customerAddress.address}`,
       );
       if (order.customerAddress.notes) {
         printer.println(`  ${order.customerAddress.notes}`);
@@ -202,20 +188,37 @@ export async function printOrderWithThermal(
       }
 
       // ===== HEADER DEL ITEM =====
+      printer.setTextSize(0, 1);
       printer.bold(true);
 
       if (!isCombo && !isSide && customData?.meatCount) {
         const veggieTag = customData.isVeggie ? " [VEGGIE]" : "";
-        printer.println(
-          `${item.quantity}x ${item.burger_name} x${customData.meatCount}${veggieTag}`,
-        );
+        const sinPapas = customData.friesQuantity === 0;
+        const baseText = `${item.quantity}x ${item.burger_name} x${customData.meatCount}${veggieTag}`;
+
+        if (sinPapas) {
+          const discount = Math.abs(customData.friesAdjustment ?? 0);
+          const sinLabel = discount > 0 ? ` Sin papas (-$${discount.toLocaleString("es-AR")}) ` : " Sin papas ";
+          printer.print(`${baseText} - `);
+          printer.invert(true);
+          printer.print(sinLabel);
+          printer.invert(false);
+          printer.println("");
+        } else {
+          const friesLabel = customData.friesQuantity !== undefined
+            ? ` - ${getFriesLabel(customData.friesQuantity, customData.friesAdjustment ?? 0)}`
+            : "";
+          printer.println(`${baseText}${friesLabel}`);
+        }
       } else {
         printer.println(`${item.quantity}x ${item.burger_name}`);
       }
 
       printer.bold(false);
+      printer.setTextSize(0, 0);
 
       // ===== PRECIO BASE =====
+      printer.newLine();
       printer.println(`Base: $${itemBasePrice.toLocaleString("es-AR")}`);
 
       // ===== DESGLOSE =====
@@ -224,8 +227,7 @@ export async function printOrderWithThermal(
         if (item.extras.length > 0) {
           printer.newLine();
           item.extras.forEach((extra) => {
-            printer.println(`+${extra.quantity}x ${extra.extra_name}`);
-            printer.println(`  +$${extra.subtotal.toLocaleString("es-AR")}`);
+            printer.println(`+${extra.quantity}x ${extra.extra_name} - +$${extra.subtotal.toLocaleString("es-AR")}`);
           });
         }
       } else if (item.customizations) {
@@ -234,24 +236,25 @@ export async function printOrderWithThermal(
           printer.newLine();
 
           if (customData.removedIngredients?.length > 0) {
-            printer.println(`Sin: ${customData.removedIngredients.join(", ")}`);
+            printer.setTextSize(0, 1);
+            printer.bold(true);
+            printer.invert(true);
+            printer.println(` Sin: ${customData.removedIngredients.join(", ")} `);
+            printer.invert(false);
+            printer.bold(false);
+            printer.setTextSize(0, 0);
           }
 
-          if (customData.friesQuantity !== undefined) {
-            printFriesLine(
-              printer,
-              customData.friesQuantity,
-              customData.friesAdjustment ?? 0,
-            );
-          }
+          const visibleExtras = (customData.extras ?? []).filter((extra: any) => {
+            const isFriesType = extra.price === 0 && extra.name.toLowerCase().includes("papas");
+            return !(isFriesType && (customData.friesQuantity ?? 0) > 0);
+          });
 
-          if (customData.extras?.length > 0) {
+          if (visibleExtras.length > 0) {
             printer.newLine();
-            customData.extras.forEach((extra: any) => {
+            visibleExtras.forEach((extra: any) => {
               const extraPrice = extra.price * extra.quantity;
-              printer.println(`+${extra.quantity}x ${extra.name}`);
-              printer.println(`  +$${extraPrice.toLocaleString("es-AR")}`);
-              printer.newLine();
+              printer.println(`+${extra.quantity}x ${extra.name} - +$${extraPrice.toLocaleString("es-AR")}`);
             });
           }
         } else if (isCombo && Array.isArray(customData)) {
@@ -265,63 +268,68 @@ export async function printOrderWithThermal(
 
               slot.burgers.forEach((burger: any) => {
                 const veggieTag = burger.isVeggie ? " [VEGGIE]" : "";
-                printer.println(
-                  `${burger.quantity}x ${burger.name} x${burger.meatCount}${veggieTag}`,
-                );
+                const sinPapas = burger.friesQuantity === 0;
+                const baseText = `${burger.quantity}x ${burger.name} x${burger.meatCount}${veggieTag}`;
+                printer.setTextSize(0, 1);
 
-                printer.newLine();
-
-                if (burger.removedIngredients?.length > 0) {
-                  printer.println(
-                    `  Sin: ${burger.removedIngredients.join(", ")}`,
-                  );
+                if (sinPapas) {
+                  const discount = Math.abs(burger.friesAdjustment ?? 0);
+                  const sinLabel = discount > 0 ? ` Sin papas (-$${discount.toLocaleString("es-AR")}) ` : " Sin papas ";
+                  printer.print(`${baseText} - `);
+                  printer.invert(true);
+                  printer.print(sinLabel);
+                  printer.invert(false);
+                  printer.println("");
+                } else {
+                  const friesLabel = burger.friesQuantity !== undefined
+                    ? ` - ${getFriesLabel(burger.friesQuantity, burger.friesAdjustment ?? 0)}`
+                    : "";
+                  printer.println(`${baseText}${friesLabel}`);
                 }
 
-                if (burger.friesQuantity !== undefined) {
-                  printFriesLine(
-                    printer,
-                    burger.friesQuantity,
-                    burger.friesAdjustment ?? 0,
+                printer.setTextSize(0, 0);
+
+                if (burger.removedIngredients?.length > 0) {
+                  printer.setTextSize(0, 1);
+                  printer.bold(true);
+                  printer.invert(true);
+                  printer.println(
+                    ` Sin: ${burger.removedIngredients.join(", ")} `,
                   );
-                  if (
-                    (burger.friesAdjustment ?? 0) === 0 &&
-                    burger.friesQuantity > 0
-                  ) {
-                    printer.newLine();
-                  }
+                  printer.invert(false);
+                  printer.bold(false);
+                  printer.setTextSize(0, 0);
                 }
 
                 if (burger.extras?.length > 0) {
                   printer.newLine();
                   burger.extras.forEach((extra: any) => {
                     const extraPrice = extra.price * extra.quantity;
-                    printer.println(`  +${extra.quantity}x ${extra.name}`);
-                    printer.println(
-                      `    +$${extraPrice.toLocaleString("es-AR")}`,
-                    );
-                    printer.newLine();
+                    printer.println(`  +${extra.quantity}x ${extra.name} - +$${extraPrice.toLocaleString("es-AR")}`);
                   });
                 }
               });
             }
 
             // 🥤 BEBIDAS Y NUGGETS
-            if (slot.selectedExtra) {
+            const slotExtras = slot.selectedExtras ?? (slot.selectedExtra ? [slot.selectedExtra] : []);
+            if (slotExtras.length > 0) {
               if (slotIndex > 0 || slot.burgers?.length > 0) {
                 printer.newLine();
               }
 
-              if (slot.slotType === "drink") {
-                printer.println(`Bebida: ${slot.selectedExtra.name}`);
-              } else {
-                printer.println(slot.selectedExtra.name);
-              }
-
-              if (slot.selectedExtra.price > 0) {
-                printer.println(
-                  `  +$${slot.selectedExtra.price.toLocaleString("es-AR")}`,
-                );
-              }
+              slotExtras.forEach((selectedExtra: any) => {
+                printer.setTextSize(0, 1);
+                const extraPriceLabel = selectedExtra.price > 0
+                  ? ` - +$${selectedExtra.price.toLocaleString("es-AR")}`
+                  : "";
+                if (slot.slotType === "drink") {
+                  printer.println(`Bebida: ${selectedExtra.name}${extraPriceLabel}`);
+                } else {
+                  printer.println(`${selectedExtra.name}${extraPriceLabel}`);
+                }
+                printer.setTextSize(0, 0);
+              });
             }
           });
         } else if (typeof item.customizations === "string") {
@@ -332,6 +340,7 @@ export async function printOrderWithThermal(
       // ===== SUBTOTAL =====
       if (isCombo || isSide || extrasTotal > 0) {
         const totalWithExtras = item.subtotal + extrasTotal;
+        printer.newLine();
         printer.println(
           `Subtotal: $${totalWithExtras.toLocaleString("es-AR")}`,
         );
@@ -374,6 +383,7 @@ export async function printOrderWithThermal(
     }
 
     if (order.delivery_fee > 0) {
+      printer.setTextSize(0, 1);
       printer.tableCustom([
         { text: "Envio", align: "LEFT", width: 0.5 },
         {
@@ -382,6 +392,7 @@ export async function printOrderWithThermal(
           width: 0.5,
         },
       ]);
+      printer.setTextSize(0, 0);
     }
 
     printer.drawLine();
@@ -443,10 +454,16 @@ export async function printOrderWithThermal(
                 }
               });
 
-              // Bebidas del combo
-              if (slot.selectedExtra && slot.slotType === "drink") {
-                const drinkName = slot.selectedExtra.name;
-                drinksSummary[drinkName] = (drinksSummary[drinkName] ?? 0) + item.quantity;
+              // Bebidas y sides del combo
+              const slotSelectedExtras = slot.selectedExtras ?? (slot.selectedExtra ? [slot.selectedExtra] : []);
+              if (slot.slotType === "drink") {
+                slotSelectedExtras.forEach((drink: any) => {
+                  drinksSummary[drink.name] = (drinksSummary[drink.name] ?? 0) + item.quantity;
+                });
+              } else if (slot.slotType === "side") {
+                slotSelectedExtras.forEach((side: any) => {
+                  extrasSummary[side.name] = (extrasSummary[side.name] ?? 0) + item.quantity;
+                });
               }
             });
           } else {
@@ -458,7 +475,12 @@ export async function printOrderWithThermal(
             }
 
             if (customData.friesQuantity !== undefined) {
-              totalFries += customData.friesQuantity * item.quantity;
+              const hasSpecialFries = item.extras.some(e =>
+                e.extra_name.toLowerCase().includes("papas")
+              );
+              if (!hasSpecialFries) {
+                totalFries += customData.friesQuantity * item.quantity;
+              }
             }
           }
         } catch {}
@@ -473,60 +495,60 @@ export async function printOrderWithThermal(
         extrasSummary[key] = (extrasSummary[key] ?? 0) + item.quantity;
       }
 
-      // Extras dentro de hamburguesas
+      // Extras dentro de hamburguesas - todos al resumen
       for (const extra of item.extras) {
-        const name = extra.extra_name.toLowerCase();
-
-        const isSide =
-          name.includes("papas") ||
-          name.includes("coca") ||
-          name.includes("bebida");
-
-        if (!isSide) continue;
-
         const key = extra.extra_name;
         extrasSummary[key] = (extrasSummary[key] ?? 0) + extra.quantity;
       }
     }
 
     if (totalMeat > 0) {
+      printer.setTextSize(0, 1);
       printer.bold(true);
       printer.print(`${totalMeat}`);
       printer.bold(false);
       printer.println(`  Medallones`);
+      printer.setTextSize(0, 0);
     }
     if (totalVeggieMeat > 0) {
+      printer.setTextSize(0, 1);
       printer.bold(true);
       printer.print(`${totalVeggieMeat}`);
       printer.bold(false);
       printer.println(`  Medallones Veggie`);
+      printer.setTextSize(0, 0);
     }
     if (totalFries > 0) {
+      printer.setTextSize(0, 1);
       printer.bold(true);
       printer.print(`${totalFries}`);
       printer.bold(false);
       printer.println(`  Papas`);
+      printer.setTextSize(0, 0);
     }
     for (const [name, qty] of Object.entries(drinksSummary)) {
+      printer.setTextSize(0, 1);
       printer.bold(true);
       printer.print(`${qty}`);
       printer.bold(false);
       printer.println(`  ${name}`);
+      printer.setTextSize(0, 0);
     }
     for (const [name, qty] of Object.entries(extrasSummary)) {
       let displayName = name;
 
-      // Abreviar tamaños en papas bacon cheddar
       if (displayName.toLowerCase().includes("papas con bacon y cheddar")) {
         displayName = displayName
           .replace(/chicas/i, "CH")
           .replace(/grandes/i, "GR");
       }
 
+      printer.setTextSize(0, 1);
       printer.bold(true);
       printer.print(`${qty}`);
       printer.bold(false);
       printer.println(`  ${displayName}`);
+      printer.setTextSize(0, 0);
     }
 
     printer.newLine();
@@ -534,16 +556,11 @@ export async function printOrderWithThermal(
     printer.newLine();
 
     // ===== ENTREGA Y PAGO =====
-    printer.bold(true);
-    printer.println("ENTREGA");
-    printer.bold(false);
-    printer.println(translateDeliveryType(order.delivery_type) || "N/A");
-    printer.newLine();
-
-    printer.bold(true);
-    printer.println("PAGO");
-    printer.bold(false);
-    printer.println(translatePaymentMethod(order.payment_method) || "N/A");
+    printer.setTextSize(0, 1);
+    printer.println(
+      `Entrega: ${translateDeliveryType(order.delivery_type) || "N/A"}  |  Pago: ${translatePaymentMethod(order.payment_method) || "N/A"}`,
+    );
+    printer.setTextSize(0, 0);
 
     // Notas
     if (order.notes) {
@@ -557,7 +574,9 @@ export async function printOrderWithThermal(
 
     printer.newLine();
     printer.alignCenter();
+    printer.setTextSize(0, 1);
     printer.println("Gracias por elegirnos!");
+    printer.setTextSize(0, 0);
 
     printer.cut();
 

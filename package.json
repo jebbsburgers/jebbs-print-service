@@ -7,6 +7,8 @@
   "bin": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
+
+    "test": "nodemon --exec ts-node src/index.ts --ext ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "pkg": "npm run build && pkg dist/index.js --targets node18-win-x64 --output build/jebbs-print-service.exe",
@@ -35,6 +37,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.6",
+    "nodemon": "^3.1.14",
     "pkg": "^5.8.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

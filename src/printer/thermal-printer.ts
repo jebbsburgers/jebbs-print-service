@@ -1,5 +1,6 @@
 import { ThermalPrinter, PrinterTypes, CharacterSet } from "node-thermal-printer";
 import path from "path";
+import os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
@@ -8,11 +9,11 @@ import {
   translateDeliveryType,
   translatePaymentMethod,
 } from "../utils/translate";
+import { getSelectedPrinter } from "../config/printer-config";
+import { listPrinters } from "./discovery";
+import { PrinterServiceError } from "./errors";
 
 const execAsync = promisify(exec);
-
-// Configuración de la impresora
-const PRINTER_NAME = "POS-80-Series";
 
 // Ancho del papel térmico (caracteres)
 const PAPER_WIDTH = 42;
@@ -584,15 +585,62 @@ export async function printOrderWithThermal(
     const buffer = await printer.getBuffer();
     console.log("📝 Buffer size:", buffer.length, "bytes");
 
-    const ticketPath = path.join(process.cwd(), "temp-ticket.prn");
+    // Se resuelve EN EL MOMENTO de imprimir, no al cargar el modulo -- es lo
+    // que hace que POST /printers/select surta efecto sin reiniciar el
+    // proceso. No lo subas a una const de nivel de modulo: eso reintroduce
+    // en silencio la necesidad de reiniciar (asi estaba antes de esta
+    // feature).
+    const selected = getSelectedPrinter();
+    if (!selected) {
+      throw new PrinterServiceError(
+        "NO_PRINTER_SELECTED",
+        "No hay una impresora configurada todavía.",
+      );
+    }
+
+    // os.tmpdir(), no process.cwd(): un proceso lanzado sin control de
+    // directorio de trabajo (un acceso directo, por ejemplo) puede tener
+    // cwd en una carpeta sin permiso de escritura.
+    const ticketPath = path.join(os.tmpdir(), "temp-ticket.prn");
     fs.writeFileSync(ticketPath, buffer, { encoding: "binary" });
 
-    console.log("🖨️ Enviando a:", PRINTER_NAME);
-    const cmd = `copy /b "${ticketPath}" "\\\\localhost\\${PRINTER_NAME}"`;
-    const result = await execAsync(cmd);
-
-    console.log("📄", result.stdout || "OK");
-    fs.unlinkSync(ticketPath);
+    try {
+      console.log("🖨️ Enviando a:", selected.shareName);
+      const cmd = `copy /b "${ticketPath}" "\\\\localhost\\${selected.shareName}"`;
+      const result = await execAsync(cmd);
+      console.log("📄", result.stdout || "OK");
+    } catch (copyErr: any) {
+      // "copy /b" sale con exit != 0 en fallo. El texto del error viene
+      // localizado (esta maquina es es-AR) asi que no sirve para clasificar
+      // -- se re-consulta discovery una vez para decidir la causa mas
+      // especifica en vez de devolver un generico.
+      const printers = await listPrinters({ skipCache: true }).catch(() => []);
+      const stillExists = printers.find((p) => p.name === selected.name);
+      if (!stillExists) {
+        throw new PrinterServiceError(
+          "PRINTER_NOT_FOUND",
+          "La impresora configurada ya no existe en esta PC.",
+        );
+      }
+      if (!stillExists.shared) {
+        throw new PrinterServiceError(
+          "SHARE_UNREACHABLE",
+          "La impresora configurada dejó de estar compartida. Volvé a seleccionarla.",
+        );
+      }
+      throw new PrinterServiceError(
+        "SHARE_UNREACHABLE",
+        "No se pudo enviar el ticket a la impresora.",
+        String(copyErr?.message ?? copyErr),
+      );
+    } finally {
+      // No bloquear un print exitoso por un cleanup fallido.
+      try {
+        fs.unlinkSync(ticketPath);
+      } catch {
+        /* noop */
+      }
+    }
 
     console.log("✅ Impreso!");
   } catch (error) {

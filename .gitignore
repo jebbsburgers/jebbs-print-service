@@ -9,6 +9,9 @@ dist/
 # Environment variables
 .env
 
+# Seleccion de impresora, especifica a la maquina de cada local
+printer-config.json
+
 # Logs
 *.log
 npm-debug.log*

@@ -1,23 +1,19 @@
+import { ENV_PATH, IS_PKG } from "./config/env";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import path from "path";
 import printRoutes from "./routes/print";
+import printerRoutes from "./routes/printers";
+import { loadPrinterConfig, getSelectedPrinter } from "./config/printer-config";
+// require, no import: pkg lo snapshotea correctamente al empaquetar, y
+// asi /health puede reportar la version real en vez del literal "1.0.0"
+// que quedaba hardcodeado y mintiendo.
+const packageJson = require("../package.json");
 
-// ============================================
-// DETECTAR ENTORNO PRIMERO
-// ============================================
-const isPkg = typeof (process as any).pkg !== "undefined";
-
-// Cargar .env desde la ubicación correcta
-const envPath = isPkg
-  ? path.join(path.dirname(process.execPath), ".env")
-  : path.join(__dirname, "..", ".env");
-
-dotenv.config({ path: envPath });
+const isPkg = IS_PKG;
+const envPath = ENV_PATH;
 
 console.log("🔧 Env path:", envPath);
-console.log("🖨️  Printer:", process.env.PRINTER_NAME); // Para verificar
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -82,13 +78,24 @@ app.use(express.json());
 // HEALTH CHECK
 // ============================================
 
+// Probe de vida PURA a propósito -- no consulta la impresora física.
+// Get-CimInstance/Get-Printer miden 1.3-2.7s por invocación (medido en
+// esta máquina), y el frontend aborta /health a los 2000ms con un poll
+// cada 30s. Meter eso acá rompería el badge por lentitud, no por la
+// impresora estar realmente desconectada, y el guard de usePrintOrder
+// bloquearía la impresión por esa falsa alarma. El estado físico real
+// vive en GET /printers, pedido solo cuando el popover se abre.
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
     service: "jebbs-print-service",
-    version: "1.0.0",
+    version: packageJson.version,
     mode: isPkg ? "production" : "development",
     port: PORT,
+    // Campos de memoria, costo cero -- alcanzan para un tercer estado de
+    // badge ("servicio activo, sin impresora") sin tocar el timeout de arriba.
+    printerConfigured: getSelectedPrinter() !== null,
+    selectedPrinter: getSelectedPrinter()?.name ?? null,
   });
 });
 
@@ -97,6 +104,7 @@ app.get("/health", (req, res) => {
 // ============================================
 
 app.use("/print", printRoutes);
+app.use("/printers", printerRoutes);
 
 // ============================================
 // ERROR HANDLING
@@ -121,29 +129,39 @@ app.use(
 // START SERVER
 // ============================================
 
-app.listen(PORT, () => {
-  console.log("");
-  console.log("🖨️  ========================================");
-  console.log("🍔  JEBBS BURGERS - PRINT SERVICE");
-  console.log("🖨️  ========================================");
-  console.log("");
-  console.log(`✅  Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`📁  Assets: ${assetsPath}`);
-  console.log(`🔧  Modo: ${isPkg ? "PRODUCCIÓN (EXE)" : "DESARROLLO"}`);
-  console.log("");
-  console.log("📡  Endpoints disponibles:");
-  console.log(`    GET  http://localhost:${PORT}/health`);
-  console.log(`    POST http://localhost:${PORT}/print/:orderId`);
-  console.log("");
-  console.log("🌐  CORS habilitado para:");
-  console.log("    - localhost:3000");
-  console.log("    - localhost:5173");
-  console.log("    - *.vercel.app (todos)");
-  console.log("    - jebbs-dashboard.vercel.app");
-  console.log("");
-  console.log("🖨️  ========================================");
-  console.log("");
-});
+// Se carga antes de empezar a escuchar -- así el primer GET /health/
+// /printers ya ve una selección resuelta (config existente, o el default
+// de primer arranque) en vez de null por una carrera con el arranque.
+loadPrinterConfig()
+  .catch((err) => console.warn("⚠️  No se pudo cargar la config de impresora:", err))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log("");
+      console.log("🖨️  ========================================");
+      console.log("🍔  JEBBS BURGERS - PRINT SERVICE");
+      console.log("🖨️  ========================================");
+      console.log("");
+      console.log(`✅  Servidor corriendo en http://localhost:${PORT}`);
+      console.log(`📁  Assets: ${assetsPath}`);
+      console.log(`🔧  Modo: ${isPkg ? "PRODUCCIÓN (EXE)" : "DESARROLLO"}`);
+      console.log(`🖨️  Impresora: ${getSelectedPrinter()?.name ?? "(sin configurar)"}`);
+      console.log("");
+      console.log("📡  Endpoints disponibles:");
+      console.log(`    GET  http://localhost:${PORT}/health`);
+      console.log(`    POST http://localhost:${PORT}/print`);
+      console.log(`    GET  http://localhost:${PORT}/printers`);
+      console.log(`    POST http://localhost:${PORT}/printers/select`);
+      console.log("");
+      console.log("🌐  CORS habilitado para:");
+      console.log("    - localhost:3000");
+      console.log("    - localhost:5173");
+      console.log("    - *.vercel.app (todos)");
+      console.log("    - jebbs-dashboard.vercel.app");
+      console.log("");
+      console.log("🖨️  ========================================");
+      console.log("");
+    });
+  });
 
 // Manejar cierre graceful
 process.on("SIGINT", () => {

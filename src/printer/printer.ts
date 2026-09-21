@@ -4,7 +4,7 @@ import path from "path";
 import { formatOrder } from "./formatter";
 import { OrderWithItems } from "../types/order";
 
-const PRINTER_NAME = "POS-58";
+const PRINTER_NAME = "POS-80-Series";
 
 export function printOrder(order: OrderWithItems): Promise<void> {
   return new Promise((resolve, reject) => {

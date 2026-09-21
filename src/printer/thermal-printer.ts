@@ -10,6 +10,7 @@ import {
   translatePaymentMethod,
 } from "../utils/translate";
 import { getSelectedPrinter } from "../config/printer-config";
+import { getBrandSettings } from "../config/brand-cache";
 import { listPrinters } from "./discovery";
 import { PrinterServiceError } from "./errors";
 
@@ -85,7 +86,8 @@ export async function printOrderWithThermal(
     }
 
     // ===== LOGO SUPERIOR =====
-    const logoPath = path.join(__dirname, "..", "..", "assets", "logo.png");
+    const brand = await getBrandSettings();
+    const logoPath = brand.logo_path;
 
     if (fs.existsSync(logoPath)) {
       try {
@@ -105,7 +107,7 @@ export async function printOrderWithThermal(
     printer.alignCenter();
     printer.setTextSize(1, 1);
     printer.bold(true);
-    printer.println("JEBBS BURGERS");
+    printer.println(brand.business_name);
     printer.bold(false);
 
     printer.bold(true);
@@ -453,19 +455,24 @@ export async function printOrderWithThermal(
                 if (burger.friesQuantity !== undefined) {
                   totalFries += burger.friesQuantity * (burger.quantity ?? 1) * item.quantity;
                 }
+
+                // Extras propios de la burger (ej: papas grandes agregadas a una burger del combo)
+                burger.extras?.forEach((extra: any) => {
+                  const key = extra.name;
+                  const qty = (extra.quantity ?? 1) * (burger.quantity ?? 1) * item.quantity;
+                  extrasSummary[key] = (extrasSummary[key] ?? 0) + qty;
+                });
               });
 
-              // Bebidas y sides del combo
+              // Bebidas y sides del combo (bebidas van a drinksSummary, todo lo demás a extrasSummary)
               const slotSelectedExtras = slot.selectedExtras ?? (slot.selectedExtra ? [slot.selectedExtra] : []);
-              if (slot.slotType === "drink") {
-                slotSelectedExtras.forEach((drink: any) => {
-                  drinksSummary[drink.name] = (drinksSummary[drink.name] ?? 0) + item.quantity;
-                });
-              } else if (slot.slotType === "side") {
-                slotSelectedExtras.forEach((side: any) => {
-                  extrasSummary[side.name] = (extrasSummary[side.name] ?? 0) + item.quantity;
-                });
-              }
+              slotSelectedExtras.forEach((selected: any) => {
+                if (slot.slotType === "drink") {
+                  drinksSummary[selected.name] = (drinksSummary[selected.name] ?? 0) + item.quantity;
+                } else {
+                  extrasSummary[selected.name] = (extrasSummary[selected.name] ?? 0) + item.quantity;
+                }
+              });
             });
           } else {
             const meatQty = (customData.meatCount ?? 1) * item.quantity;
@@ -494,6 +501,17 @@ export async function printOrderWithThermal(
       if (item.extra_id) {
         const key = item.burger_name;
         extrasSummary[key] = (extrasSummary[key] ?? 0) + item.quantity;
+
+        // Papas sueltas (ej: "Papas fritas chicas"/"grandes") también suman
+        // al total "Papas" de arriba -- antes solo contaba lo que venía
+        // incluido con una hamburguesa (friesQuantity). Quedan afuera las
+        // variantes "con algo" (con cheddar, con bacon): son un producto
+        // distinto que necesita preparación aparte, no una papa simple, y
+        // siguen apareciendo solo en su propia línea de extrasSummary abajo.
+        const isPlainFries = /papas/i.test(key) && !/\bcon\b/i.test(key);
+        if (isPlainFries) {
+          totalFries += item.quantity;
+        }
       }
 
       // Extras dentro de hamburguesas - todos al resumen

@@ -5,6 +5,7 @@ import path from "path";
 import printRoutes from "./routes/print";
 import printerRoutes from "./routes/printers";
 import { loadPrinterConfig, getSelectedPrinter } from "./config/printer-config";
+import { loadBrandCache } from "./config/brand-cache";
 // require, no import: pkg lo snapshotea correctamente al empaquetar, y
 // asi /health puede reportar la version real en vez del literal "1.0.0"
 // que quedaba hardcodeado y mintiendo.
@@ -132,6 +133,16 @@ app.use(
 // Se carga antes de empezar a escuchar -- así el primer GET /health/
 // /printers ya ve una selección resuelta (config existente, o el default
 // de primer arranque) en vez de null por una carrera con el arranque.
+// loadBrandCache() es síncrona (solo lee disco, sin red) -- se llama antes
+// de loadPrinterConfig() a propósito, para que ninguna carrera de timing
+// entre ambas importe. Igual que loadPrinterConfig, nunca puede tumbar el
+// arranque del servidor si falla.
+try {
+  loadBrandCache();
+} catch (err) {
+  console.warn("⚠️  No se pudo cargar el cache de marca:", err);
+}
+
 loadPrinterConfig()
   .catch((err) => console.warn("⚠️  No se pudo cargar la config de impresora:", err))
   .finally(() => {
